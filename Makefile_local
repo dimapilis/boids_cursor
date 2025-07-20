@@ -1,0 +1,24 @@
+CXX = g++
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2
+TARGET = boids_local
+SOURCE = boids_local.cpp
+
+# SFML libraries
+SFML_LIBS = -lsfml-graphics -lsfml-window -lsfml-system
+
+# SFML include and library paths (Homebrew installation)
+SFML_INCLUDE = -I/opt/homebrew/include
+SFML_LIB = -L/opt/homebrew/lib
+
+all: $(TARGET)
+
+$(TARGET): $(SOURCE)
+	$(CXX) $(CXXFLAGS) $(SFML_INCLUDE) -o $(TARGET) $(SOURCE) $(SFML_LIB) $(SFML_LIBS)
+
+clean:
+	rm -f $(TARGET)
+
+run: $(TARGET)
+	./$(TARGET)
+
+.PHONY: all clean run 

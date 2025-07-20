@@ -1,0 +1,20 @@
+# Build artifacts
+boids_opengl
+boids_simple
+boids_fixed
+boids_server
+boids_local
+
+# Object files
+*.o
+
+# macOS
+.DS_Store
+
+# IDE files
+.vscode/
+.idea/
+
+# Temporary files
+*~
+*.tmp 

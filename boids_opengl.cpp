@@ -10,48 +10,79 @@
 #include <OpenGL/glu.h>
 #include <GLUT/glut.h>
 
+// Constants
 #define PI 3.14159265359
 #define WINDOW_WIDTH 900
 #define WINDOW_HEIGHT 600
 #define BOIDSCOUNT 300
 
+// Simulation parameters
+#define MAX_WING_ANGLE 67.5
+#define WING_ANGLE_THRESHOLD 33.75
+#define MAX_VELOCITY 10.0
+#define COLLISION_RADIUS 10.0
+#define COHESION_FACTOR 100.0
+#define ALIGNMENT_FACTOR 8.0
+
 using namespace std;
 
-// Vector class (3D)
+// ============================================================================
+// Vector Mathematics
+// ============================================================================
+
 class vec3df {
 public:
     float x, y, z;
-    vec3df() {x = 0; y = 0; z = 0;}
-    vec3df(float px, float py, float pz) {
-        x = px;
-        y = py;
-        z = pz;
+    
+    vec3df() : x(0), y(0), z(0) {}
+    vec3df(float px, float py, float pz) : x(px), y(py), z(pz) {}
+    
+    vec3df operator+ (const vec3df& o) const { 
+        return vec3df(x + o.x, y + o.y, z + o.z); 
+    }
+    vec3df operator- (const vec3df& o) const { 
+        return vec3df(x - o.x, y - o.y, z - o.z); 
+    }
+    vec3df operator* (float b) const { 
+        return vec3df(x * b, y * b, z * b); 
+    }
+    vec3df operator/ (float b) const { 
+        return vec3df(x / b, y / b, z / b); 
     }
     
-    vec3df operator+ (vec3df o) { return vec3df(x+o.x, y+o.y, z+o.z); }
-    vec3df operator- (vec3df o) { return vec3df(x-o.x, y-o.y, z-o.z); }
-    vec3df operator* (float b) { return vec3df(x*b, y*b, z*b); }
-    vec3df operator/ (float b) { return vec3df(x/b, y/b, z/b); }
-    float length() { return sqrt(x*x + y*y + z*z); }
+    float length() const { 
+        return sqrt(x * x + y * y + z * z); 
+    }
+    
+    vec3df normalize() const {
+        float len = length();
+        return len > 0 ? *this / len : vec3df();
+    }
 };
 
-vec3df normalize(vec3df a) { 
-    return a / a.length(); 
+// Vector utility functions
+vec3df normalize(const vec3df& a) { 
+    return a.normalize(); 
 }
 
-float dotproduct(vec3df a, vec3df b) { 
-    return a.x*b.x + a.y*b.y + a.z*b.z; 
+float dotproduct(const vec3df& a, const vec3df& b) { 
+    return a.x * b.x + a.y * b.y + a.z * b.z; 
 }
 
-vec3df crossproduct(vec3df a, vec3df b) {
-    return vec3df(a.y*b.z - a.z*b.y,
-                  a.z*b.x - a.x*b.z,
-                  a.x*b.y - a.y*b.x);
+vec3df crossproduct(const vec3df& a, const vec3df& b) {
+    return vec3df(a.y * b.z - a.z * b.y,
+                  a.z * b.x - a.x * b.z,
+                  a.x * b.y - a.y * b.x);
 }
 
-float distBetween(vec3df a, vec3df b) {
-    return sqrt((b.x-a.x)*(b.x-a.x) + (b.y-a.y)*(b.y-a.y) + (b.z-a.z)*(b.z-a.z));
+float distBetween(const vec3df& a, const vec3df& b) {
+    vec3df diff = b - a;
+    return diff.length();
 }
+
+// ============================================================================
+// Boid Structure
+// ============================================================================
 
 struct Boid {
     vec3df avgdirection;
@@ -67,71 +98,81 @@ struct Boid {
     float bodyHeight;
 };
 
-// Global variables
-int GW, GH;
+// ============================================================================
+// Global Variables
+// ============================================================================
 
-// Lighting globals
+// Window dimensions
+int GW = WINDOW_WIDTH, GH = WINDOW_HEIGHT;
+
+// Lighting configuration
 GLfloat light_pos[4] = {1.0, 1.0, 1000.0, 1.0};
 GLfloat light_amb[4] = {0.6, 0.6, 0.6, 1.0};
 GLfloat light_diff[4] = {0.6, 0.6, 0.6, 1.0};
 GLfloat light_spec[4] = {0.8, 0.8, 0.8, 1.0};
 
-struct materialStruct {
+// Material definitions
+struct Material {
     GLfloat ambient[4];
     GLfloat diffuse[4];
     GLfloat specular[4];
     GLfloat shininess[1];
 };
 
-materialStruct blueMaterial = {
+Material blueMaterial = {
     {0.0, 0.0, 0.0, 1.0},
-    {(float)104/255, (float)206/255, (float)205/255, 1.0},
-    {0.0, 0.0, 0.0, 1.0},
-    {0.0}
-};
-
-materialStruct orangeMaterial = {
-    {0.0, 0.0, 0.0, 1.0},
-    {(float)230/255, (float)152/255, (float)97/255, 1.0},
+    {104.0f/255, 206.0f/255, 205.0f/255, 1.0},
     {0.0, 0.0, 0.0, 1.0},
     {0.0}
 };
 
-// Flock information
+Material orangeMaterial = {
+    {0.0, 0.0, 0.0, 1.0},
+    {230.0f/255, 152.0f/255, 97.0f/255, 1.0},
+    {0.0, 0.0, 0.0, 1.0},
+    {0.0}
+};
+
+// Flock data
 int flockPopulation;
 vector<Boid> flockList;
-// Flock influences
-int m1, m2, m3;
 
-// Predator boid
-Boid ball;
-float modelAngle;
+// Behavior weights
+int m1 = 1, m2 = 0, m3 = 1;  // cohesion, attraction, velocity
 
-// Animation variables
-bool wingRise;
-float upperWingAngle;
-float lowerWingAngle;
-bool pauseScene;
-float bodyHeight;
-bool lightIsEnabled;
+// Predator/attractor
+Boid predator;
+float modelAngle = 0.0;
 
-// Box boundaries
-float xMin = -250.0;
-float xMax = 250.0;
-float yMin = -250.0;
-float yMax = 250.0;
-float zMin = 250.0;
-float zMax = 700.0; 
+// Animation state
+bool wingRise = true;
+float upperWingAngle = 0.0;
+float lowerWingAngle = -45.0;
+bool pauseScene = false;
+float bodyHeight = 0.0;
+bool lightIsEnabled = true;
 
-// Sets up a specific material
-void materials(materialStruct materials) {
-    glMaterialfv(GL_FRONT, GL_AMBIENT, materials.ambient);
-    glMaterialfv(GL_FRONT, GL_DIFFUSE, materials.diffuse);
-    glMaterialfv(GL_FRONT, GL_SPECULAR, materials.specular);
-    glMaterialfv(GL_FRONT, GL_SHININESS, materials.shininess);
+// Boundary box
+const float xMin = -250.0, xMax = 250.0;
+const float yMin = -250.0, yMax = 250.0;
+const float zMin = 250.0, zMax = 700.0;
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+float randPoint(float min, float max) {
+    return ((float(rand()) / float(RAND_MAX)) * (max - min)) + min;
 }
 
-void init_lighting() {
+void setMaterial(const Material& material) {
+    glMaterialfv(GL_FRONT, GL_AMBIENT, material.ambient);
+    glMaterialfv(GL_FRONT, GL_DIFFUSE, material.diffuse);
+    glMaterialfv(GL_FRONT, GL_SPECULAR, material.specular);
+    glMaterialfv(GL_FRONT, GL_SHININESS, material.shininess);
+}
+
+void initLighting() {
     glEnable(GL_LIGHT0);
     glLightfv(GL_LIGHT0, GL_DIFFUSE, light_diff);
     glLightfv(GL_LIGHT0, GL_AMBIENT, light_amb);
@@ -139,76 +180,68 @@ void init_lighting() {
     glShadeModel(GL_FLAT);
 }
 
-void pos_light() {
-    // Set the light's position
+void updateLightPosition() {
     glMatrixMode(GL_MODELVIEW);
     glLightfv(GL_LIGHT0, GL_POSITION, light_pos);
 }
 
-float randPoint(float min, float max) {
-    return ((float(rand()) / float(RAND_MAX)) * (max - min)) + min;
+// ============================================================================
+// Flock Initialization
+// ============================================================================
+
+void setupFlock(int population) {
+    flockPopulation = population;
+    srand(time(NULL));
+    
+    for(int i = 0; i < flockPopulation; ++i) {
+        Boid boid;
+        
+        // Random initial position
+        boid.position = vec3df(randPoint(xMin, xMax), 
+                               randPoint(yMin, yMax), 
+                               randPoint(zMin, zMax));
+        boid.oldposition = boid.position;
+        boid.velocity = vec3df(0.0, 0.0, 0.0);
+        
+        // Initial direction and rotation
+        boid.direction = vec3df(0.0, 0.0, 1.0);
+        boid.rotation = vec3df(0.0, 0.0, 0.0);
+        boid.angle = 0;
+        
+        // Wing animation state
+        boid.upperWingAngle = randPoint(0.0, MAX_WING_ANGLE);
+        boid.lowerWingAngle = (boid.upperWingAngle / MAX_WING_ANGLE) * 90.0 - 45.0;
+        boid.wingRise = (boid.upperWingAngle < WING_ANGLE_THRESHOLD);
+        
+        flockList.push_back(boid);
+    }
 }
 
-void setup(int reqPop) {
-    // Create the flock of boids
-    flockPopulation = reqPop;
-    Boid b;
-    srand(time(NULL));
-    for(int i = 0; i < flockPopulation; ++i) {
-        // Random locations
-        b.position.x = randPoint(xMin, xMax);
-        b.position.y = randPoint(yMin, yMax);
-        b.position.z = randPoint(zMin, zMax);
-        b.oldposition = b.position;
-        b.velocity.x = 0.0;
-        b.velocity.y = 0.0;
-        b.velocity.z = 0.0;
-        // Rotating vectors
-        b.direction.x = 0.0;
-        b.direction.y = 0.0;
-        b.direction.z = 1.0;
-        b.rotation.x = 0.0;
-        b.rotation.y = 0.0;
-        b.rotation.z = 0.0;
-        b.angle = 0;
-        // Non-uniform wing movement
-        b.upperWingAngle = randPoint(0.0, 67.5);
-        b.lowerWingAngle = (b.upperWingAngle/67.5)*90.0-45.0;
-        if(b.upperWingAngle < 33.75) {
-            b.wingRise = true;
-        }
-        else {
-            b.wingRise = false;
-        }
-        flockList.push_back(b);
-    }
-} 
+// ============================================================================
+// Flock Behavior
+// ============================================================================
 
-vec3df flockCentering(Boid bj, int j) {
+vec3df flockCentering(const Boid& bj, int j) {
     vec3df pcj;
-    Boid b;
     
     for(int i = 0; i < flockPopulation; ++i) {
         if(j != i) {
-            b = flockList.at(i);
-            pcj = pcj + b.position;
+            pcj = pcj + flockList.at(i).position;
         }
     }
     
     pcj = pcj / (flockPopulation - 1);
     
-    return (pcj - bj.position) / 100.0;
+    return (pcj - bj.position) / COHESION_FACTOR;
 }
 
-vec3df collisionAvoidance(Boid bj, int j) {
+vec3df collisionAvoidance(const Boid& bj, int j) {
     vec3df c;
-    Boid b;
     
     for(int i = 0; i < flockPopulation; ++i) {
         if(j != i) {
-            b = flockList.at(i);
-            if(distBetween(b.position, bj.position) < 10.0) {
-                c = c - (b.position - bj.position);
+            if(distBetween(flockList.at(i).position, bj.position) < COLLISION_RADIUS) {
+                c = c - (flockList.at(i).position - bj.position);
             }
         }
     }
@@ -216,33 +249,29 @@ vec3df collisionAvoidance(Boid bj, int j) {
     return c;
 }
 
-vec3df velocityMatching(Boid bj, int j) {
+vec3df velocityMatching(const Boid& bj, int j) {
     vec3df pvj;
-    Boid b;
     
     for(int i = 0; i < flockPopulation; ++i) {
         if(j != i) {
-            b = flockList.at(i);
-            pvj = pvj + b.velocity;
+            pvj = pvj + flockList.at(i).velocity;
         }
     }
     
     pvj = pvj / (flockPopulation - 1);
     
-    return (pvj - bj.velocity) / 8;
+    return (pvj - bj.velocity) / ALIGNMENT_FACTOR;
 }
 
-vec3df limit_velocity(Boid b) {
-    float vlim = 10.0;
-    
-    if(b.velocity.length() > vlim) {
-        b.velocity = (b.velocity / b.velocity.length()) * vlim;
+vec3df limit_velocity(Boid& b) {
+    if(b.velocity.length() > MAX_VELOCITY) {
+        b.velocity = b.velocity.normalize() * MAX_VELOCITY;
     }
     
     return b.velocity;
 }
 
-vec3df bound_position(Boid b) {
+vec3df bound_position(const Boid& b) {
     vec3df v;
     
     if(b.position.x < xMin) {
@@ -267,565 +296,189 @@ vec3df bound_position(Boid b) {
     return v;
 }
 
-vec3df tend_to_place(Boid b) {
-    vec3df place = ball.position;
+vec3df tend_to_place(const Boid& b) {
+    vec3df place = predator.position;
     
-    return (place - b.position) / 100.0;
+    return (place - b.position) / COHESION_FACTOR;
 }
+
+// ============================================================================
+// Boid Update
+// ============================================================================
 
 void updateBoids() {
     vec3df v1, v2, v3, v4, v5;
-    Boid b;
-    vec3df avgDir;
     
     for(int i = 0; i < flockPopulation; ++i) {
-        b = flockList.at(i);
+        Boid& b = flockList.at(i);
+        
         v1 = flockCentering(b, i) * m1;
         v2 = collisionAvoidance(b, i);
         v3 = velocityMatching(b, i);
         v4 = bound_position(b);
         v5 = tend_to_place(b) * m2;
-        flockList.at(i).velocity = flockList.at(i).velocity + v1 + v2 + v3 + v4 + v5;
-        vec3df t = v1 + v2 + v3 + v4;
-        flockList.at(i).velocity = limit_velocity(flockList.at(i)) * m3;
-        flockList.at(i).oldposition = flockList.at(i).position;
-        flockList.at(i).position = flockList.at(i).position + flockList.at(i).velocity;
-        flockList.at(i).direction = flockList.at(i).position - flockList.at(i).oldposition;
+        
+        b.velocity = b.velocity + v1 + v2 + v3 + v4 + v5;
+        b.velocity = limit_velocity(b) * m3;
+        
+        b.oldposition = b.position;
+        b.position = b.position + b.velocity;
+        b.direction = b.position - b.oldposition;
+    }
+    
+    // Update average direction and rotation
+    vec3df avgDir;
+    for(int i = 0; i < flockPopulation; ++i) {
         avgDir = avgDir + flockList.at(i).direction;
     }
-    
     avgDir = avgDir / flockPopulation;
 
-    for(int i = 0; i < flockPopulation; i++) {
+    for(int i = 0; i < flockPopulation; ++i) {
         vec3df olddir = flockList.at(i).direction;
-        vec3df newdir = avgDir*100 - flockList.at(i).oldposition;
-        flockList.at(i).avgdirection = avgDir*100;
-        vec3df cross = crossproduct(olddir, newdir);
-        flockList.at(i).rotation = cross;
-        float radians = dotproduct(olddir, newdir);
-        radians = acos(radians/(olddir.length()*newdir.length()));
-        flockList.at(i).angle = radians*(180/PI);
+        vec3df newdir = avgDir * COHESION_FACTOR - flockList.at(i).oldposition;
+        flockList.at(i).avgdirection = avgDir * COHESION_FACTOR;
+        flockList.at(i).rotation = crossproduct(olddir, newdir);
+        flockList.at(i).angle = dotproduct(olddir, newdir) / (olddir.length() * newdir.length());
+        flockList.at(i).angle = acos(flockList.at(i).angle) * (180.0 / PI);
     }
-} 
+}
+
+// ============================================================================
+// Drawing Functions
+// ============================================================================
+
+// Helper function to draw a rectangular face
+void drawFace(const vec3df& v1, const vec3df& v2, const vec3df& v3, const vec3df& v4) {
+    vec3df normal = (v1 + v2 + v3 + v4) / 4.0;
+    normal = normal.normalize();
+    glNormal3f(normal.x, normal.y, normal.z);
+    
+    if(lightIsEnabled) {
+        glBegin(GL_POLYGON);
+    } else {
+        glBegin(GL_LINE_LOOP);
+    }
+    glVertex3f(v1.x, v1.y, v1.z);
+    glVertex3f(v2.x, v2.y, v2.z);
+    glVertex3f(v3.x, v3.y, v3.z);
+    glVertex3f(v4.x, v4.y, v4.z);
+    glEnd();
+}
 
 void drawWing() {
-    vec3df v1, v2, v3, v4, n;
+    // Wing dimensions
+    const float width = 2.5, height = 0.5, depth = 3.0;
     
     // Bottom face
-    v1.x = -2.5; v1.y = -0.5; v1.z = -3.0;
-    v2.x = 2.5; v2.y = -0.5; v2.z = -3.0;
-    v3.x = 2.5; v3.y = -0.5; v3.z = 3.0;
-    v4.x = -2.5; v4.y = -0.5; v4.z = 3.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, -height, -depth), vec3df(width, -height, -depth),
+             vec3df(width, -height, depth), vec3df(-width, -height, depth));
     
     // Left face
-    v1.x = -2.5; v1.y = -0.5; v1.z = -3.0;
-    v2.x = -2.5; v2.y = 0.5; v2.z = -3.0;
-    v3.x = -2.5; v3.y = 0.5; v3.z = 3.0;
-    v4.x = -2.5; v4.y = -0.5; v4.z = 3.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, -height, -depth), vec3df(-width, height, -depth),
+             vec3df(-width, height, depth), vec3df(-width, -height, depth));
     
     // Right face
-    v1.x = 2.5; v1.y = -0.5; v1.z = -3.0;
-    v2.x = 2.5; v2.y = 0.5; v2.z = -3.0;
-    v3.x = 2.5; v3.y = 0.5; v3.z = 3.0;
-    v4.x = 2.5; v4.y = -0.5; v4.z = 3.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(width, -height, -depth), vec3df(width, height, -depth),
+             vec3df(width, height, depth), vec3df(width, -height, depth));
     
     // Front face
-    v1.x = -2.5; v1.y = -0.5; v1.z = 3.0;
-    v2.x = -2.5; v2.y = 0.5; v2.z = 3.0;
-    v3.x = 2.5; v3.y = 0.5; v3.z = 3.0;
-    v4.x = 2.5; v4.y = -0.5; v4.z = 3.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, -height, depth), vec3df(-width, height, depth),
+             vec3df(width, height, depth), vec3df(width, -height, depth));
     
     // Back face
-    v1.x = -2.5; v1.y = -0.5; v1.z = -3.0;
-    v2.x = -2.5; v2.y = 0.5; v2.z = -3.0;
-    v3.x = 2.5; v3.y = 0.5; v3.z = -3.0;
-    v4.x = 2.5; v4.y = -0.5; v4.z = -3.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, -height, -depth), vec3df(-width, height, -depth),
+             vec3df(width, height, -depth), vec3df(width, -height, -depth));
     
     // Top face
-    v1.x = -2.5; v1.y = 0.5; v1.z = -3.0;
-    v2.x = 2.5; v2.y = 0.5; v2.z = -3.0;
-    v3.x = 2.5; v3.y = 0.5; v3.z = 3.0;
-    v4.x = -2.5; v4.y = 0.5; v4.z = 3.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, height, -depth), vec3df(width, height, -depth),
+             vec3df(width, height, depth), vec3df(-width, height, depth));
 }
 
 void drawBody() {    
-    vec3df v1, v2, v3, v4, n;
+    // Body dimensions
+    const float width = 3.0, height = 1.0, depth = 4.0;
     
     // Bottom face
-    v1.x = -3.0; v1.y = -1.0; v1.z = -4.0;
-    v2.x = 3.0; v2.y = -1.0; v2.z = -4.0;
-    v3.x = 3.0; v3.y = -1.0; v3.z = 4.0;
-    v4.x = -3.0; v4.y = -1.0; v4.z = 4.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, -height, -depth), vec3df(width, -height, -depth),
+             vec3df(width, -height, depth), vec3df(-width, -height, depth));
     
     // Left face
-    v1.x = -3.0; v1.y = -1.0; v1.z = -4.0;
-    v2.x = -3.0; v2.y = 1.0; v2.z = -4.0;
-    v3.x = -3.0; v3.y = 1.0; v3.z = 4.0;
-    v4.x = -3.0; v4.y = -1.0; v4.z = 4.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, -height, -depth), vec3df(-width, height, -depth),
+             vec3df(-width, height, depth), vec3df(-width, -height, depth));
     
     // Right face
-    v1.x = 3.0; v1.y = -1.0; v1.z = -4.0;
-    v2.x = 3.0; v2.y = 1.0; v2.z = -4.0;
-    v3.x = 3.0; v3.y = 1.0; v3.z = 4.0;
-    v4.x = 3.0; v4.y = -1.0; v4.z = 4.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(width, -height, -depth), vec3df(width, height, -depth),
+             vec3df(width, height, depth), vec3df(width, -height, depth));
     
     // Front face
-    v1.x = -3.0; v1.y = -1.0; v1.z = 4.0;
-    v2.x = -3.0; v2.y = 1.0; v2.z = 4.0;
-    v3.x = 3.0; v3.y = 1.0; v3.z = 4.0;
-    v4.x = 3.0; v4.y = -1.0; v4.z = 4.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, -height, depth), vec3df(-width, height, depth),
+             vec3df(width, height, depth), vec3df(width, -height, depth));
     
     // Back face
-    v1.x = -3.0; v1.y = -1.0; v1.z = -4.0;
-    v2.x = -3.0; v2.y = 1.0; v2.z = -4.0;
-    v3.x = 3.0; v3.y = 1.0; v3.z = -4.0;
-    v4.x = 3.0; v4.y = -1.0; v4.z = -4.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, -height, -depth), vec3df(-width, height, -depth),
+             vec3df(width, height, -depth), vec3df(width, -height, -depth));
     
     // Top face
-    v1.x = -3.0; v1.y = 1.0; v1.z = -4.0;
-    v2.x = 3.0; v2.y = 1.0; v2.z = -4.0;
-    v3.x = 3.0; v3.y = 1.0; v3.z = 4.0;
-    v4.x = -3.0; v4.y = 1.0; v4.z = 4.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, height, -depth), vec3df(width, height, -depth),
+             vec3df(width, height, depth), vec3df(-width, height, depth));
 } 
 
 void drawHead() {    
-    vec3df v1, v2, v3, v4, n;
+    // Head dimensions (pointed front)
+    const float width = 3.0, height = 1.0, depth = 2.0;
     
     // Bottom face
-    v1.x = -3.0; v1.y = -1.0; v1.z = -2.0;
-    v2.x = 3.0; v2.y = -1.0; v2.z = -2.0;
-    v3.x = 3.0; v3.y = -1.0; v3.z = 2.0;
-    v4.x = -3.0; v4.y = -1.0; v4.z = 2.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, -height, -depth), vec3df(width, -height, -depth),
+             vec3df(width, -height, depth), vec3df(-width, -height, depth));
     
-    // Left face
-    v1.x = -3.0; v1.y = -1.0; v1.z = -2.0;
-    v2.x = -3.0; v2.y = 1.0; v2.z = -2.0;
-    v3.x = -3.0; v3.y = 1.0; v3.z = 0.0;
-    v4.x = -3.0; v4.y = -1.0; v4.z = 2.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    // Left face (pointed)
+    drawFace(vec3df(-width, -height, -depth), vec3df(-width, height, -depth),
+             vec3df(-width, height, 0.0), vec3df(-width, -height, depth));
     
-    // Right face
-    v1.x = 3.0; v1.y = -1.0; v1.z = -2.0;
-    v2.x = 3.0; v2.y = 1.0; v2.z = -2.0;
-    v3.x = 3.0; v3.y = 1.0; v3.z = 0.0;
-    v4.x = 3.0; v4.y = -1.0; v4.z = 2.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    // Right face (pointed)
+    drawFace(vec3df(width, -height, -depth), vec3df(width, height, -depth),
+             vec3df(width, height, 0.0), vec3df(width, -height, depth));
     
-    // Front face
-    v1.x = -3.0; v1.y = -1.0; v1.z = 2.0;
-    v2.x = -3.0; v2.y = 1.0; v2.z = 0.0;
-    v3.x = 3.0; v3.y = 1.0; v3.z = 0.0;
-    v4.x = 3.0; v4.y = -1.0; v4.z = 2.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    // Front face (pointed)
+    drawFace(vec3df(-width, -height, depth), vec3df(-width, height, 0.0),
+             vec3df(width, height, 0.0), vec3df(width, -height, depth));
     
     // Back face
-    v1.x = -3.0; v1.y = -1.0; v1.z = -2.0;
-    v2.x = -3.0; v2.y = 1.0; v2.z = -2.0;
-    v3.x = 3.0; v3.y = 1.0; v3.z = -2.0;
-    v4.x = 3.0; v4.y = -1.0; v4.z = -2.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, -height, -depth), vec3df(-width, height, -depth),
+             vec3df(width, height, -depth), vec3df(width, -height, -depth));
     
-    // Top face
-    v1.x = -3.0; v1.y = 1.0; v1.z = -2.0;
-    v2.x = 3.0; v2.y = 1.0; v2.z = -2.0;
-    v3.x = 3.0; v3.y = 1.0; v3.z = 0.0;
-    v4.x = -3.0; v4.y = 1.0; v4.z = 0.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    // Top face (pointed)
+    drawFace(vec3df(-width, height, -depth), vec3df(width, height, -depth),
+             vec3df(width, height, 0.0), vec3df(-width, height, 0.0));
 }
 
 void drawTail() {    
-    vec3df v1, v2, v3, v4, n;
+    // Tail dimensions
+    const float width = 3.0, height = 0.5, depth = 2.0;
     
     // Bottom face
-    v1.x = -3.0; v1.y = -0.5; v1.z = -2.0;
-    v2.x = 3.0; v2.y = -0.5; v2.z = -2.0;
-    v3.x = 3.0; v3.y = -0.5; v3.z = 2.0;
-    v4.x = -3.0; v4.y = -0.5; v4.z = 2.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, -height, -depth), vec3df(width, -height, -depth),
+             vec3df(width, -height, depth), vec3df(-width, -height, depth));
     
     // Left face
-    v1.x = -3.0; v1.y = -0.5; v1.z = -2.0;
-    v2.x = -3.0; v2.y = 0.5; v2.z = -2.0;
-    v3.x = -3.0; v3.y = 0.5; v3.z = 2.0;
-    v4.x = -3.0; v4.y = -0.5; v4.z = 2.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, -height, -depth), vec3df(-width, height, -depth),
+             vec3df(-width, height, depth), vec3df(-width, -height, depth));
     
     // Right face
-    v1.x = 3.0; v1.y = -0.5; v1.z = -2.0;
-    v2.x = 3.0; v2.y = 0.5; v2.z = -2.0;
-    v3.x = 3.0; v3.y = 0.5; v3.z = 2.0;
-    v4.x = 3.0; v4.y = -0.5; v4.z = 2.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(width, -height, -depth), vec3df(width, height, -depth),
+             vec3df(width, height, depth), vec3df(width, -height, depth));
     
     // Front face
-    v1.x = -3.0; v1.y = -0.5; v1.z = 2.0;
-    v2.x = -3.0; v2.y = 0.5; v2.z = 2.0;
-    v3.x = 3.0; v3.y = 0.5; v3.z = 2.0;
-    v4.x = 3.0; v4.y = -0.5; v4.z = 2.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, -height, depth), vec3df(-width, height, depth),
+             vec3df(width, height, depth), vec3df(width, -height, depth));
     
     // Back face
-    v1.x = -3.0; v1.y = -0.5; v1.z = -2.0;
-    v2.x = -3.0; v2.y = 0.5; v2.z = -2.0;
-    v3.x = 3.0; v3.y = 0.5; v3.z = -2.0;
-    v4.x = 3.0; v4.y = -0.5; v4.z = -2.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, -height, -depth), vec3df(-width, height, -depth),
+             vec3df(width, height, -depth), vec3df(width, -height, -depth));
     
     // Top face
-    v1.x = -3.0; v1.y = 0.5; v1.z = -2.0;
-    v2.x = 3.0; v2.y = 0.5; v2.z = -2.0;
-    v3.x = 3.0; v3.y = 0.5; v3.z = 2.0;
-    v4.x = -3.0; v4.y = 0.5; v4.z = 2.0;
-    n = v1 + v2 + v3 + v4;
-    n = n / 4.0;
-    n = normalize(n);
-    glNormal3f(n.x, n.y, n.z);
-    if(lightIsEnabled) {
-        glBegin(GL_POLYGON);
-    }
-    else {
-        glBegin(GL_LINE_LOOP);
-    }
-    glVertex3f(v1.x, v1.y, v1.z);
-    glVertex3f(v2.x, v2.y, v2.z);
-    glVertex3f(v3.x, v3.y, v3.z);
-    glVertex3f(v4.x, v4.y, v4.z);
-    glEnd();
+    drawFace(vec3df(-width, height, -depth), vec3df(width, height, -depth),
+             vec3df(width, height, depth), vec3df(-width, height, depth));
 }
 
 void drawBoid(int i, bool inFlock) {
@@ -908,9 +561,9 @@ void drawBoid(int i, bool inFlock) {
 
 void drawAll() {
     // Drawing predator
-    materials(orangeMaterial);
+    setMaterial(orangeMaterial);
     glPushMatrix();
-    glTranslatef(ball.position.x, ball.position.y, ball.position.z);
+    glTranslatef(predator.position.x, predator.position.y, predator.position.z);
     glRotatef(modelAngle, 0.0, 1.0, 0.0);
     glColor3f(0.0, 1.0, 0.0);
     drawBoid(0, false);
@@ -920,7 +573,7 @@ void drawAll() {
     vec3df avgDir;
     
     // Drawing boids
-    materials(blueMaterial);
+    setMaterial(blueMaterial);
     for(int i = 0; i < flockList.size(); ++i) {
         glPushMatrix();
         Boid boid = flockList.at(i);
@@ -935,7 +588,7 @@ void drawAll() {
     
     avgPos = avgPos / flockPopulation;
     avgDir = avgDir / flockPopulation;
-    avgDir = avgDir * 100;
+    avgDir = avgDir * COHESION_FACTOR; // Scale for display
     
     for(int i = 0; i < flockPopulation && !lightIsEnabled; i++){
         Boid s = flockList.at(i);
@@ -955,7 +608,7 @@ void display(SDL_Window* window) {
     gluLookAt(0.0, 0.0, 800.0, 
               0.0, 0.0, 0.0,
               0.0, 1.0, 0.0);
-    pos_light();
+    updateLightPosition();
     drawAll();
     
     SDL_GL_SwapWindow(window);
@@ -975,22 +628,22 @@ void reshape(int w, int h) {
 void handleKeyboard(SDL_Event& event) {
     switch(event.key.keysym.sym) {
         case SDLK_a:
-            ball.position.x += -20;
+            predator.position.x += -20;
             break;
         case SDLK_d:
-            ball.position.x += 20;
+            predator.position.x += 20;
             break;
         case SDLK_w:
-            ball.position.y += 20;
+            predator.position.y += 20;
             break;
         case SDLK_s:
-            ball.position.y += -20;
+            predator.position.y += -20;
             break;
         case SDLK_z:
-            ball.position.z += 20;
+            predator.position.z += 20;
             break;
         case SDLK_x:
-            ball.position.z += -20;
+            predator.position.z += -20;
             break;
         case SDLK_q:
             exit(EXIT_SUCCESS);
@@ -1039,7 +692,7 @@ void idle() {
             upperWingAngle += 6.0;
             lowerWingAngle += 8.0;
             bodyHeight = lowerWingAngle/15;
-            if(upperWingAngle >= 67.5) {
+            if(upperWingAngle >= MAX_WING_ANGLE) {
                 wingRise = false;
             }
         }
@@ -1057,7 +710,7 @@ void idle() {
                 flockList.at(i).upperWingAngle += 6.0;
                 flockList.at(i).lowerWingAngle += 8.0;
                 flockList.at(i).bodyHeight = flockList.at(i).lowerWingAngle/15;
-                if(flockList.at(i).upperWingAngle >= 67.5) {
+                if(flockList.at(i).upperWingAngle >= MAX_WING_ANGLE) {
                     flockList.at(i).wingRise = false;
                 }
             }
@@ -1076,11 +729,10 @@ void idle() {
 
 int main(int argc, char **argv) {
     // Global variable initializations
-    GW = 900;
-    GH = 600;
-    ball.position.x = ball.position.y = ball.position.z = 0.0;
-    m1 = m3 = 1;
-    m2 = 0;
+    GW = WINDOW_WIDTH;
+    GH = WINDOW_HEIGHT;
+    predator.position.x = predator.position.y = predator.position.z = 0.0;
+    m1 = 1; m2 = 0; m3 = 1; // Reset weights
     modelAngle = 0.0;
     pauseScene = false;
     lightIsEnabled = true;
@@ -1127,10 +779,10 @@ int main(int argc, char **argv) {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_NORMALIZE);
     glEnable(GL_LIGHTING);
-    init_lighting();
+    initLighting();
     
     // Setup flock population
-    setup(BOIDSCOUNT);
+    setupFlock(BOIDSCOUNT);
     std::cout << "Boids simulation initialized with " << BOIDSCOUNT << " boids" << std::endl;
     
     // Initial reshape

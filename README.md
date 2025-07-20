@@ -2,6 +2,12 @@
 
 This repository contains a recreation of my original boids (bird flocking) simulation senior project, rebuilt using Cursor AI. The project demonstrates emergent flocking behavior through the implementation of Craig Reynolds' boids algorithm.
 
+![Boids Simulator Screenshot](boids_screenshot.png)
+
+**[🎥 Watch Demo Video](https://www.youtube.com/watch?v=bUsnMwt1Q2g)**
+
+*The demo shows the simulation in action with 300 3D boids exhibiting realistic flocking behavior, wing animations, and interactive predator/attractor controls.*
+
 ## Project Overview
 
 The boids simulation showcases how complex flocking behavior can emerge from simple rules:

@@ -54,7 +54,7 @@ The simulation implements the classic Craig Reynolds boids algorithm with three 
 To compile the simulation:
 
 ```bash
-make -f Makefile_opengl
+make
 ```
 
 ### Dependencies

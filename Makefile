@@ -1,17 +1,14 @@
 CXX = g++
-CXXFLAGS = -std=c++11 -Wall -Wextra -O2
-TARGET = boids_server
-SOURCE = boids_server.cpp
+CXXFLAGS = -std=c++11 -Wall -Wextra -I/opt/homebrew/include
+LDFLAGS = -L/opt/homebrew/lib -lSDL2 -framework OpenGL -framework GLUT
 
-all: $(TARGET)
+TARGET = boids_opengl
+SOURCE = boids_opengl.cpp
 
 $(TARGET): $(SOURCE)
-	$(CXX) $(CXXFLAGS) -o $(TARGET) $(SOURCE)
+	$(CXX) $(CXXFLAGS) -o $(TARGET) $(SOURCE) $(LDFLAGS)
 
 clean:
 	rm -f $(TARGET)
 
-run: $(TARGET)
-	./$(TARGET)
-
-.PHONY: all clean run 
+.PHONY: clean 
